@@ -40,6 +40,9 @@ LOG_LEVELS = dict(logging._levelNames)
 LOG_LEVELS["FATAL"] = logging.FATAL
 LOG_LEVELS[logging.FATAL] = "FATAL"
 
+def kwdict(d):
+    return d
+
 PENDING_DEPRECATION_FMT = """
     %(description)s is scheduled for deprecation in \
     version %(deprecation)s and removal in version v%(removal)s. \
