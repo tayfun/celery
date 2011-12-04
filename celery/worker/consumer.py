@@ -304,7 +304,8 @@ class Consumer(object):
         from .strategy import Strategy
         for task in tasks.itervalues():
             s = Strategy(task, self.logger, hostname=self.hostname,
-                         event_dispatcher=eventer)()
+                         event_dispatcher=eventer,
+                         connection_errors=self.connection_errors)()
             s.next()
             self.strategies[task.name] = s
 
@@ -354,13 +355,14 @@ class Consumer(object):
         otherwise we move it the ready queue for immediate processing.
 
         """
+        print("ON TASK")
 
 
         if self._does_info:
             self.logger.info("Got task from broker: %s", task.shortinfo())
 
-        if task.revoked():
-            return
+        #if task.revoked():
+        #    return
 
         if self.event_dispatcher and self.event_dispatcher.enabled:
             self.event_dispatcher.send("task-received", uuid=task.task_id,
@@ -411,16 +413,6 @@ class Consumer(object):
                                      safe_repr(message.content_encoding),
                                      safe_repr(message.delivery_info))
 
-    def _ack_task(self, message):
-        try:
-            message.ack()
-        except self.connection_errors + (AttributeError, ), exc:
-            self.logger.critical(
-                "Couldn't ack %r: %s reason:%r",
-                    message.delivery_tag,
-                    self._message_report(message.payload, message), exc)
-
-    xx =0
     def receive_message(self, body, message):
         """Handles incoming messages.
 
@@ -428,9 +420,8 @@ class Consumer(object):
         :param message: The kombu message object.
 
         """
-        self.xx += 1
         # need to guard against errors occurring while acking the message.
-        ack = partial(self._ack_task, message)
+        ack = message.ack_log_error
 
         if not hasattr(body, "__getitem__") or "task" not in body:
             warnings.warn(RuntimeWarning(

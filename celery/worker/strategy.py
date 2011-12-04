@@ -1,3 +1,5 @@
+from celery import current_app  # noqa
+
 from ..datastructures import AttributeDict
 from ..utils import kwdict
 from ..utils.timeutils import timezone, maybe_iso8601
@@ -11,7 +13,8 @@ class Request(dict):
     acknowledged = False
     _already_revoked = False
 
-    def __init__(self, task, request, on_ack=None, event_dispatcher=None):
+    def __init__(self, task, request, on_ack=None, event_dispatcher=None,
+            logger=None, connection_errors=()):
         self.task = task
         self.task_name = request["name"]
         self.on_ack = on_ack
@@ -20,6 +23,8 @@ class Request(dict):
         if task.ignore_result:
             self._store_errors = task.store_errors_even_if_ignored
         dict.__init__(self, request)
+        self.logger = logger
+        self.connection_errors = connection_errors
 
     def __hash__(self):
         return hash(self["id"])
@@ -27,7 +32,8 @@ class Request(dict):
     def acknowledge(self):
         """Acknowledge task."""
         if not self.acknowledged:
-            self.on_ack()
+            self.on_ack(self.logger,
+                        self.connection_errors + (AttributeError, ))
             self.acknowledged = True
 
     def revoked(self):
@@ -62,7 +68,8 @@ class Request(dict):
 class Strategy(object):
 
     def __init__(self, task, logger=None, loglevel=None,
-            logfile=None, hostname=None, event_dispatcher=None):
+            logfile=None, hostname=None, event_dispatcher=None,
+            connection_errors=()):
         self.logger= logger
         self.loglevel = loglevel
         self.logfile = logfile
@@ -70,6 +77,7 @@ class Strategy(object):
         self.event_dispatcher = event_dispatcher
         self.task = task
         self.app = self.task.app
+        self.connection_errors = connection_errors
 
     def __call__(self):
         task = self.task
@@ -82,63 +90,69 @@ class Strategy(object):
         to_local = timezone.to_local
         evd = self.event_dispatcher
         acks_late = task.acks_late
+        logger = self.logger
+        connection_errors = self.connection_errors
         if task.ignore_result:
             store_errors = task.store_errors_even_if_ignored
-        xx = 0
 
         reserved = state.task_reserved
         accepted = state.task_accepted
         ready = state.task_ready
+        UTC = timezone.utc
+        pid = os.getpid(
 
         while 1:
             (body, message, on_ack) = (yield)
             get = body.get
             delivery_info = getattr(message, "delivery_info", {})
-            delivery_info = dict((key, delivery_info.get(key))
+            dget = delivery_info.get
+            delivery_info = dict((key, dget(key))
                                     for key in WANTED_DELIVERY_INFO)
-
+            args = body["args"]
             kwargs = body["kwargs"]
             if not hasattr(kwargs, "items"):
-                raise InvalidTaskError("Task keyword arguments is not a mapping.")
 
-            eta = maybe_iso8601(get("eta"))
-            expires = maybe_iso8601(get("expires"))
-            tz = get("tz", None)
+            kwa
+            id = body["id"]
+            eta = get("eta")
+            expires = get("expires")
+            utc = get("utc", None)
+            tz = UTC if utc else tzlocal
             if eta is not None:
-                eta = to_local(eta, tzlocal, tz)
+                eta = to_local(maybe_iso8601(eta), tzlocal, tz)
             if expires is not None:
-                expires = to_local(expires, tzlocal, tz)
-
-            request = {"name": name,
+                expires = to_local(maybe_iso8601(expires), tzlocal, tz)
                     "id": body["id"],
-                    "taskset": get("taskset", None),
+            request = {"name": name,
+                    "id": id,
                     "args": body["args"],
-                    "kwargs": kwdict(kwargs),
+                    "args": args,
+                    "kwargs": kwargs,
                     "chord": get("chord"),
                     "retries": get("retries", 0),
                     "eta": eta,
                     "expires": expires,
                     "delivery_info": delivery_info,
-                    "tz": get("tz", None),
+                    "utc": utc,
                     "tzlocal": tzlocal,
                     "is_eager": False,
                     "tz": tz}
-            request = Request(task, request, on_ack, evd)
+            request = Request(task, request, on_ack, evd,
+                              logger, connection_errors)
 
-            if not request.revoked():
+            if 1: #not request.revoked():
                 reserved(request)
                 if not acks_late:
                     request.acknowledge()
-
                 accepted(request)
                 try:
-                    t = TaskTrace(name, request["id"],
-                            request["args"], request["kwargs"],
-                            hostname=hostname,
-                            loader=loader,
-                            request=request)
-                    t.execute()
-                    #task.request.update(request)
-                    #task(*request["args"], **request["kwargs"])
+                    #t = TaskTrace(name, request["id"],
+                    #        request["args"], request["kwargs"],
+                    #        hostname=hostname,
+                    #        loader=loader,
+                    #        request=request)
+                    #t.execute()
+                    task.request.update(request)
+                    task(*request["args"], **request["kwargs"])
                 finally:
                     ready(request)

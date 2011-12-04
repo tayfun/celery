@@ -105,7 +105,7 @@ class TaskTrace(object):
         self.name = name
         self.args = args
         self.kwargs = kwargs
-        task = self.task = task or tasks[self.task_name]
+        task = self.task = task or tasks[self.name]
         self.request = request or {}
         self.status = states.PENDING
         self.strtb = None
